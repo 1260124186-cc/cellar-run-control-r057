@@ -2,12 +2,12 @@ package service
 
 import (
 	"sort"
+	"time"
 
 	"github.com/1260124186-cc/solo-0016-cellar-run-control/internal/domain"
 )
 
 func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error) {
-	now := s.clock.Now()
 	code := domain.NormalizeRunCode(input.Code)
 	if code == "" {
 		generated, err := generatedRunCode()
@@ -24,8 +24,6 @@ func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error
 		State:          domain.RunPlanned,
 		Observations:   []domain.GravityObservation{},
 		Version:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
 	}
 	if err := run.Validate(); err != nil {
 		return domain.FermentationRun{}, err
@@ -49,6 +47,9 @@ func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error
 			return domain.NewError(domain.CodeRunConflict,
 				"a run with the same code already exists")
 		}
+		now := s.eventTimeFor(snapshot, "run", run.ID)
+		run.CreatedAt = now
+		run.UpdatedAt = now
 		snapshot.Runs[run.ID] = run.Clone()
 		snapshot.RunIndex[run.Code] = run.ID
 		return nil
@@ -167,8 +168,7 @@ func (s *Service) AbortRun(
 			return err
 		}
 		hadStarted := run.HadStarted()
-		runTime := s.eventTimeFor(snapshot, "run", run.ID)
-		vesselTime := runTime
+		var runTime, vesselTime time.Time
 		if run.VesselID != nil {
 			runTime, vesselTime = s.eventTimePair(
 				snapshot,
@@ -177,6 +177,9 @@ func (s *Service) AbortRun(
 				"vessel",
 				*run.VesselID,
 			)
+		} else {
+			runTime = s.eventTimeFor(snapshot, "run", run.ID)
+			vesselTime = runTime
 		}
 		if err := run.Abort(runTime); err != nil {
 			return err

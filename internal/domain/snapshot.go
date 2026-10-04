@@ -24,33 +24,31 @@ func (t EventTimeline) Clone() EventTimeline {
 	return cloned
 }
 
+// Next stamps the subject with the unified business time of the current
+// commit. Every successful commit advances the subject, and the commit time
+// never moves before the last committed business time.
 func (t *EventTimeline) Next(subject string, candidate time.Time) time.Time {
 	if t.Entities == nil {
 		t.Entities = map[string]time.Time{}
 	}
-	candidate = candidate.UTC()
-	if !t.LastCommitted.IsZero() && candidate.Before(t.LastCommitted) {
-		candidate = t.LastCommitted
+	stamp := candidate.UTC()
+	if !t.LastCommitted.IsZero() && !stamp.After(t.LastCommitted) {
+		stamp = t.LastCommitted.Add(time.Nanosecond)
 	}
-	if existing, found := t.Entities[subject]; found && !existing.IsZero() {
-		return existing
-	}
-	t.record(subject, candidate)
-	return candidate
+	t.record(subject, stamp)
+	return stamp
 }
 
+// CommitPair stamps two related subjects with one unified commit time so
+// their business times cannot diverge or invert within the commit.
 func (t *EventTimeline) CommitPair(
 	first string,
 	second string,
 	candidate time.Time,
 ) (time.Time, time.Time) {
-	firstTime := t.Next(first, candidate)
-	secondTime := candidate.UTC()
-	if !t.LastCommitted.IsZero() && secondTime.Before(t.LastCommitted) {
-		secondTime = t.LastCommitted
-	}
-	t.record(second, secondTime)
-	return firstTime, secondTime
+	stamp := t.Next(first, candidate)
+	t.record(second, stamp)
+	return stamp, stamp
 }
 
 func (t *EventTimeline) record(subject string, stamp time.Time) {
@@ -67,26 +65,23 @@ func (t EventTimeline) Horizon(subject string) time.Time {
 	return t.Entities[subject]
 }
 
+// RebuildEventTimeline restores the committed business-time horizon from
+// confirmed entity timestamps. It never moves a confirmed time: each subject
+// keeps its own value and the horizon resumes at the latest one.
 func RebuildEventTimeline(values map[string]time.Time) EventTimeline {
 	rebuilt := EmptyEventTimeline()
-	var earliest time.Time
-	for _, value := range values {
+	var latest time.Time
+	for subject, value := range values {
 		if value.IsZero() {
 			continue
 		}
-		if earliest.IsZero() || value.Before(earliest) {
-			earliest = value
+		stamp := value.UTC()
+		rebuilt.Entities[subject] = stamp
+		if stamp.After(latest) {
+			latest = stamp
 		}
 	}
-	if earliest.IsZero() {
-		return rebuilt
-	}
-	for subject, value := range values {
-		if !value.IsZero() {
-			rebuilt.Entities[subject] = earliest
-		}
-	}
-	rebuilt.LastCommitted = earliest
+	rebuilt.LastCommitted = latest
 	return rebuilt
 }
 

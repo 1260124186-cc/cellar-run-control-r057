@@ -7,14 +7,11 @@ import (
 )
 
 func (s *Service) CreateVessel(input CreateVesselInput) (domain.Vessel, error) {
-	now := s.clock.Now()
 	vessel := domain.Vessel{
 		Code:      domain.NormalizeVesselCode(input.Code),
 		CapacityL: input.CapacityL,
 		State:     domain.VesselAvailable,
 		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	if err := vessel.Validate(); err != nil {
 		return domain.Vessel{}, err
@@ -30,6 +27,9 @@ func (s *Service) CreateVessel(input CreateVesselInput) (domain.Vessel, error) {
 			return domain.NewError(domain.CodeVesselConflict,
 				"a vessel with the same code already exists")
 		}
+		now := s.eventTimeFor(snapshot, "vessel", vessel.ID)
+		vessel.CreatedAt = now
+		vessel.UpdatedAt = now
 		snapshot.Vessels[vessel.ID] = vessel
 		snapshot.VesselIndex[vessel.Code] = vessel.ID
 		return nil

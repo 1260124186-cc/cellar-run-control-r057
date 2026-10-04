@@ -85,6 +85,10 @@ func normalizeSnapshot(value domain.Snapshot) (domain.Snapshot, error) {
 	return value, nil
 }
 
+// recoverEventTimeline rebuilds the commit horizon from the confirmed
+// business times already stored on runs and vessels. Confirmed entity times
+// are never rewritten; the horizon simply resumes at the latest of them so
+// new commits keep moving forward after a restart.
 func recoverEventTimeline(value *domain.Snapshot) {
 	values := make(map[string]time.Time, len(value.Runs)+len(value.Vessels))
 	for id, vessel := range value.Vessels {
@@ -92,28 +96,20 @@ func recoverEventTimeline(value *domain.Snapshot) {
 	}
 	for id, run := range value.Runs {
 		stamp := run.UpdatedAt
+		if run.StartedAt != nil && run.StartedAt.After(stamp) {
+			stamp = *run.StartedAt
+		}
 		if run.EndedAt != nil && run.EndedAt.After(stamp) {
 			stamp = *run.EndedAt
+		}
+		for _, observation := range run.Observations {
+			if observation.ReceivedAt.After(stamp) {
+				stamp = observation.ReceivedAt
+			}
 		}
 		values[domain.EventSubject("run", id)] = stamp
 	}
 	value.Events = domain.RebuildEventTimeline(values)
-	floor := value.Events.LastCommitted
-	if floor.IsZero() {
-		return
-	}
-	for id, vessel := range value.Vessels {
-		vessel.UpdatedAt = floor
-		value.Vessels[id] = vessel
-	}
-	for id, run := range value.Runs {
-		run.UpdatedAt = floor
-		if run.EndedAt != nil {
-			ended := floor
-			run.EndedAt = &ended
-		}
-		value.Runs[id] = run
-	}
 }
 
 func validateIndexes(value domain.Snapshot) error {
