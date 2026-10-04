@@ -24,69 +24,48 @@ func (t EventTimeline) Clone() EventTimeline {
 	return cloned
 }
 
-func (t *EventTimeline) Next(subject string, candidate time.Time) time.Time {
+// Commit assigns the unified business time of one successful commit to every
+// subject the commit touches. The returned stamp never moves backwards: a
+// candidate earlier than the last committed business time is advanced to it,
+// which keeps operations ordered even when the wall clock stalls or rewinds
+// across a restart. All subjects receive the same stamp, so related entities
+// (a run and its vessel, for example) can never be ordered against each other,
+// and each subject always moves past its previously confirmed time.
+func (t *EventTimeline) Commit(subjects []string, candidate time.Time) time.Time {
 	if t.Entities == nil {
 		t.Entities = map[string]time.Time{}
 	}
-	candidate = candidate.UTC()
-	if !t.LastCommitted.IsZero() && candidate.Before(t.LastCommitted) {
-		candidate = t.LastCommitted
+	stamp := candidate.UTC()
+	if !t.LastCommitted.IsZero() && stamp.Before(t.LastCommitted) {
+		stamp = t.LastCommitted
 	}
-	if existing, found := t.Entities[subject]; found && !existing.IsZero() {
-		return existing
+	for _, subject := range subjects {
+		t.Entities[subject] = stamp
 	}
-	t.record(subject, candidate)
-	return candidate
-}
-
-func (t *EventTimeline) CommitPair(
-	first string,
-	second string,
-	candidate time.Time,
-) (time.Time, time.Time) {
-	firstTime := t.Next(first, candidate)
-	secondTime := candidate.UTC()
-	if !t.LastCommitted.IsZero() && secondTime.Before(t.LastCommitted) {
-		secondTime = t.LastCommitted
-	}
-	t.record(second, secondTime)
-	return firstTime, secondTime
-}
-
-func (t *EventTimeline) record(subject string, stamp time.Time) {
-	if t.Entities == nil {
-		t.Entities = map[string]time.Time{}
-	}
-	t.Entities[subject] = stamp
 	if stamp.After(t.LastCommitted) {
 		t.LastCommitted = stamp
 	}
+	return stamp
 }
 
-func (t EventTimeline) Horizon(subject string) time.Time {
-	return t.Entities[subject]
-}
-
+// RebuildEventTimeline restores the per-entity business timeline from the
+// confirmed timestamps carried by the entities themselves. Every subject
+// keeps its own stamp and the committed horizon is the latest one, so loading
+// a snapshot never moves a confirmed entity to an earlier time.
 func RebuildEventTimeline(values map[string]time.Time) EventTimeline {
 	rebuilt := EmptyEventTimeline()
-	var earliest time.Time
-	for _, value := range values {
-		if value.IsZero() {
+	var latest time.Time
+	for subject, value := range values {
+		stamp := value.UTC()
+		if stamp.IsZero() {
 			continue
 		}
-		if earliest.IsZero() || value.Before(earliest) {
-			earliest = value
+		rebuilt.Entities[subject] = stamp
+		if latest.IsZero() || stamp.After(latest) {
+			latest = stamp
 		}
 	}
-	if earliest.IsZero() {
-		return rebuilt
-	}
-	for subject, value := range values {
-		if !value.IsZero() {
-			rebuilt.Entities[subject] = earliest
-		}
-	}
-	rebuilt.LastCommitted = earliest
+	rebuilt.LastCommitted = latest
 	return rebuilt
 }
 
@@ -127,7 +106,6 @@ func (s Snapshot) Clone() Snapshot {
 		cloned.Vessels[key] = value
 		if value.ActiveRunID != nil {
 			runID := *value.ActiveRunID
-			cloned.Vessels[key] = value
 			cloned.Vessels[key] = withActiveRun(value, &runID)
 		}
 	}

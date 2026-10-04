@@ -7,14 +7,11 @@ import (
 )
 
 func (s *Service) CreateVessel(input CreateVesselInput) (domain.Vessel, error) {
-	now := s.clock.Now()
 	vessel := domain.Vessel{
 		Code:      domain.NormalizeVesselCode(input.Code),
 		CapacityL: input.CapacityL,
 		State:     domain.VesselAvailable,
 		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	if err := vessel.Validate(); err != nil {
 		return domain.Vessel{}, err
@@ -30,6 +27,9 @@ func (s *Service) CreateVessel(input CreateVesselInput) (domain.Vessel, error) {
 			return domain.NewError(domain.CodeVesselConflict,
 				"a vessel with the same code already exists")
 		}
+		stamp := s.commitTime(snapshot, domain.EventSubject("vessel", vessel.ID))
+		vessel.CreatedAt = stamp
+		vessel.UpdatedAt = stamp
 		snapshot.Vessels[vessel.ID] = vessel
 		snapshot.VesselIndex[vessel.Code] = vessel.ID
 		return nil
@@ -104,7 +104,7 @@ func (s *Service) FinishCleaning(
 				"associated run is still open")
 		}
 		if err := vessel.FinishCleaning(
-			s.eventTimeFor(snapshot, "vessel", vessel.ID),
+			s.commitTime(snapshot, domain.EventSubject("vessel", vessel.ID)),
 		); err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func (s *Service) RetireVessel(id string, input VersionInput) (domain.Vessel, er
 			return err
 		}
 		if err := vessel.Retire(
-			s.eventTimeFor(snapshot, "vessel", vessel.ID),
+			s.commitTime(snapshot, domain.EventSubject("vessel", vessel.ID)),
 		); err != nil {
 			return err
 		}

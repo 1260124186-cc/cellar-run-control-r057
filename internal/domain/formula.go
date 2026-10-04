@@ -130,7 +130,7 @@ func ValidateFormulaSteps(steps []FormulaStep, required bool) error {
 	return nil
 }
 
-func (f *Formula) SetSteps(steps []FormulaStep) error {
+func (f *Formula) SetSteps(steps []FormulaStep, now time.Time) error {
 	if f.State != FormulaDraft {
 		return NewError(CodeFormulaState, "only a draft formula can change process steps")
 	}
@@ -138,7 +138,7 @@ func (f *Formula) SetSteps(steps []FormulaStep) error {
 		return err
 	}
 	f.Steps = append([]FormulaStep(nil), steps...)
-	f.UpdatedAt = time.Now().UTC()
+	f.UpdatedAt = now.UTC()
 	f.Version++
 	return nil
 }

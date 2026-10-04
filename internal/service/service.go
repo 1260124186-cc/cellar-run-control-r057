@@ -33,26 +33,13 @@ func (s *Service) checkExpected(current int64, expected *int64) error {
 	return nil
 }
 
-func (s *Service) eventTimeFor(
-	snapshot *domain.Snapshot,
-	kind string,
-	id string,
-) time.Time {
-	return snapshot.Events.Next(domain.EventSubject(kind, id), s.clock.Now())
-}
-
-func (s *Service) eventTimePair(
-	snapshot *domain.Snapshot,
-	firstKind string,
-	firstID string,
-	secondKind string,
-	secondID string,
-) (time.Time, time.Time) {
-	return snapshot.Events.CommitPair(
-		domain.EventSubject(firstKind, firstID),
-		domain.EventSubject(secondKind, secondID),
-		s.clock.Now(),
-	)
+// commitTime reads the clock exactly once for the current commit and binds the
+// returned unified business time to every subject the commit touches. Because
+// the mutator runs on a throwaway snapshot clone, a failed commit is discarded
+// together with any timeline movement it made, so failed requests never
+// advance any business time.
+func (s *Service) commitTime(snapshot *domain.Snapshot, subjects ...string) time.Time {
+	return snapshot.Events.Commit(subjects, s.clock.Now())
 }
 
 func generateEntityID(prefix string) (string, error) {

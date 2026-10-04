@@ -85,8 +85,24 @@ func normalizeSnapshot(value domain.Snapshot) (domain.Snapshot, error) {
 	return value, nil
 }
 
+// recoverEventTimeline reconstructs the per-entity business timeline from the
+// confirmed timestamps carried by the persisted entities. Entity timestamps
+// are authoritative and must be preserved exactly: the rebuilt horizon is the
+// latest confirmed time and no entity field is rewritten, so restarting never
+// moves already confirmed operations into the past.
 func recoverEventTimeline(value *domain.Snapshot) {
-	values := make(map[string]time.Time, len(value.Runs)+len(value.Vessels))
+	values := make(map[string]time.Time,
+		len(value.Formulas)+len(value.Vessels)+len(value.Runs))
+	for id, formula := range value.Formulas {
+		stamp := formula.UpdatedAt
+		if formula.ApprovedAt != nil && formula.ApprovedAt.After(stamp) {
+			stamp = *formula.ApprovedAt
+		}
+		if formula.RetiredAt != nil && formula.RetiredAt.After(stamp) {
+			stamp = *formula.RetiredAt
+		}
+		values[domain.EventSubject("formula", id)] = stamp
+	}
 	for id, vessel := range value.Vessels {
 		values[domain.EventSubject("vessel", id)] = vessel.UpdatedAt
 	}
@@ -98,22 +114,6 @@ func recoverEventTimeline(value *domain.Snapshot) {
 		values[domain.EventSubject("run", id)] = stamp
 	}
 	value.Events = domain.RebuildEventTimeline(values)
-	floor := value.Events.LastCommitted
-	if floor.IsZero() {
-		return
-	}
-	for id, vessel := range value.Vessels {
-		vessel.UpdatedAt = floor
-		value.Vessels[id] = vessel
-	}
-	for id, run := range value.Runs {
-		run.UpdatedAt = floor
-		if run.EndedAt != nil {
-			ended := floor
-			run.EndedAt = &ended
-		}
-		value.Runs[id] = run
-	}
 }
 
 func validateIndexes(value domain.Snapshot) error {

@@ -12,7 +12,7 @@ func (s *Service) AppendObservation(
 		if !ok {
 			return domain.NewError(domain.CodeRunNotFound, "run was not found")
 		}
-		now := s.eventTimeFor(snapshot, "run", run.ID)
+		commitTime := s.commitTime(snapshot, domain.EventSubject("run", run.ID))
 		observation := domain.GravityObservation{
 			RunID:        run.ID,
 			Sequence:     input.Sequence,
@@ -20,7 +20,7 @@ func (s *Service) AppendObservation(
 			TemperatureC: input.TemperatureC,
 			ObservedAt:   input.ObservedAt.UTC(),
 			Note:         input.Note,
-			ReceivedAt:   now,
+			ReceivedAt:   commitTime,
 		}
 		if err := run.AddObservation(observation); err != nil {
 			return err
@@ -48,7 +48,9 @@ func (s *Service) BeginConditioning(
 		if err := s.checkExpected(run.Version, input.ExpectedVersion); err != nil {
 			return err
 		}
-		if err := run.BeginConditioning(s.eventTimeFor(snapshot, "run", run.ID)); err != nil {
+		if err := run.BeginConditioning(
+			s.commitTime(snapshot, domain.EventSubject("run", run.ID)),
+		); err != nil {
 			return err
 		}
 		snapshot.Runs[id] = run.Clone()
@@ -86,17 +88,14 @@ func (s *Service) CompleteRun(
 		if !ok {
 			return domain.NewError(domain.CodeVesselNotFound, "vessel was not found")
 		}
-		runTime, vesselTime := s.eventTimePair(
-			snapshot,
-			"run",
-			run.ID,
-			"vessel",
-			vessel.ID,
+		commitTime := s.commitTime(snapshot,
+			domain.EventSubject("run", run.ID),
+			domain.EventSubject("vessel", vessel.ID),
 		)
-		if err := run.Complete(formula.TargetOriginalGravity, runTime); err != nil {
+		if err := run.Complete(formula.TargetOriginalGravity, commitTime); err != nil {
 			return err
 		}
-		if err := vessel.StartCleaning(run.ID, vesselTime); err != nil {
+		if err := vessel.StartCleaning(run.ID, commitTime); err != nil {
 			return err
 		}
 		snapshot.Runs[id] = run.Clone()

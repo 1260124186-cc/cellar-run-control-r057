@@ -7,7 +7,6 @@ import (
 )
 
 func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error) {
-	now := s.clock.Now()
 	code := domain.NormalizeRunCode(input.Code)
 	if code == "" {
 		generated, err := generatedRunCode()
@@ -24,8 +23,6 @@ func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error
 		State:          domain.RunPlanned,
 		Observations:   []domain.GravityObservation{},
 		Version:        1,
-		CreatedAt:      now,
-		UpdatedAt:      now,
 	}
 	if err := run.Validate(); err != nil {
 		return domain.FermentationRun{}, err
@@ -49,6 +46,9 @@ func (s *Service) CreateRun(input CreateRunInput) (domain.FermentationRun, error
 			return domain.NewError(domain.CodeRunConflict,
 				"a run with the same code already exists")
 		}
+		stamp := s.commitTime(snapshot, domain.EventSubject("run", run.ID))
+		run.CreatedAt = stamp
+		run.UpdatedAt = stamp
 		snapshot.Runs[run.ID] = run.Clone()
 		snapshot.RunIndex[run.Code] = run.ID
 		return nil
@@ -81,17 +81,14 @@ func (s *Service) ReserveRun(
 			return domain.FieldError(domain.CodeInvalidInput,
 				"planned_volume_liters", "exceeds vessel capacity")
 		}
-		runTime, vesselTime := s.eventTimePair(
-			snapshot,
-			"run",
-			run.ID,
-			"vessel",
-			vessel.ID,
+		commitTime := s.commitTime(snapshot,
+			domain.EventSubject("run", run.ID),
+			domain.EventSubject("vessel", vessel.ID),
 		)
-		if err := vessel.Reserve(run.ID, vesselTime); err != nil {
+		if err := vessel.Reserve(run.ID, commitTime); err != nil {
 			return err
 		}
-		if err := run.ReserveVessel(vessel.ID, runTime); err != nil {
+		if err := run.ReserveVessel(vessel.ID, commitTime); err != nil {
 			return err
 		}
 		snapshot.Runs[id] = run.Clone()
@@ -127,17 +124,14 @@ func (s *Service) StartRun(
 		if !ok {
 			return domain.NewError(domain.CodeVesselNotFound, "vessel was not found")
 		}
-		runTime, vesselTime := s.eventTimePair(
-			snapshot,
-			"run",
-			run.ID,
-			"vessel",
-			vessel.ID,
+		commitTime := s.commitTime(snapshot,
+			domain.EventSubject("run", run.ID),
+			domain.EventSubject("vessel", vessel.ID),
 		)
-		if err := vessel.StartRun(run.ID, vesselTime); err != nil {
+		if err := vessel.StartRun(run.ID, commitTime); err != nil {
 			return err
 		}
-		if err := run.StartFermentation(runTime); err != nil {
+		if err := run.StartFermentation(commitTime); err != nil {
 			return err
 		}
 		snapshot.Runs[id] = run.Clone()
@@ -167,18 +161,12 @@ func (s *Service) AbortRun(
 			return err
 		}
 		hadStarted := run.HadStarted()
-		runTime := s.eventTimeFor(snapshot, "run", run.ID)
-		vesselTime := runTime
+		subjects := []string{domain.EventSubject("run", run.ID)}
 		if run.VesselID != nil {
-			runTime, vesselTime = s.eventTimePair(
-				snapshot,
-				"run",
-				run.ID,
-				"vessel",
-				*run.VesselID,
-			)
+			subjects = append(subjects, domain.EventSubject("vessel", *run.VesselID))
 		}
-		if err := run.Abort(runTime); err != nil {
+		commitTime := s.commitTime(snapshot, subjects...)
+		if err := run.Abort(commitTime); err != nil {
 			return err
 		}
 		if run.VesselID != nil {
@@ -187,10 +175,10 @@ func (s *Service) AbortRun(
 				return domain.NewError(domain.CodeVesselNotFound, "vessel was not found")
 			}
 			if hadStarted {
-				if err := vessel.StartCleaning(run.ID, vesselTime); err != nil {
+				if err := vessel.StartCleaning(run.ID, commitTime); err != nil {
 					return err
 				}
-			} else if err := vessel.ReleaseReservation(run.ID, vesselTime); err != nil {
+			} else if err := vessel.ReleaseReservation(run.ID, commitTime); err != nil {
 				return err
 			}
 			snapshot.Vessels[vessel.ID] = vessel

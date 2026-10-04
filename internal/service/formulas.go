@@ -8,7 +8,6 @@ import (
 )
 
 func (s *Service) CreateFormula(input CreateFormulaInput) (domain.Formula, error) {
-	now := s.clock.Now()
 	formula := domain.Formula{
 		Name:                  input.Name,
 		Style:                 input.Style,
@@ -20,8 +19,6 @@ func (s *Service) CreateFormula(input CreateFormulaInput) (domain.Formula, error
 		Steps:                 []domain.FormulaStep{},
 		State:                 domain.FormulaDraft,
 		Version:               1,
-		CreatedAt:             now,
-		UpdatedAt:             now,
 	}
 	formula.Normalize()
 	if err := formula.Validate(); err != nil {
@@ -39,6 +36,9 @@ func (s *Service) CreateFormula(input CreateFormulaInput) (domain.Formula, error
 			return domain.NewError(domain.CodeFormulaNameConflict,
 				"a formula with the same normalized name already exists")
 		}
+		stamp := s.commitTime(snapshot, domain.EventSubject("formula", formula.ID))
+		formula.CreatedAt = stamp
+		formula.UpdatedAt = stamp
 		snapshot.Formulas[formula.ID] = formula
 		snapshot.NameIndex[nameKey] = formula.ID
 		return nil
@@ -62,10 +62,10 @@ func (s *Service) SetFormulaSteps(
 		if err := s.checkExpected(formula.Version, input.ExpectedVersion); err != nil {
 			return err
 		}
-		if err := formula.SetSteps(input.Steps); err != nil {
+		stamp := s.commitTime(snapshot, domain.EventSubject("formula", id))
+		if err := formula.SetSteps(input.Steps, stamp); err != nil {
 			return err
 		}
-		formula.UpdatedAt = s.clock.Now()
 		snapshot.Formulas[id] = formula
 		updated = formula.Clone()
 		return nil
@@ -86,7 +86,9 @@ func (s *Service) ApproveFormula(id string, input VersionInput) (domain.Formula,
 		if err := s.checkExpected(formula.Version, input.ExpectedVersion); err != nil {
 			return err
 		}
-		if err := formula.Approve(s.clock.Now()); err != nil {
+		if err := formula.Approve(
+			s.commitTime(snapshot, domain.EventSubject("formula", id)),
+		); err != nil {
 			return err
 		}
 		snapshot.Formulas[id] = formula
@@ -116,7 +118,9 @@ func (s *Service) RetireFormula(id string, input VersionInput) (domain.Formula, 
 					"formula is attached to a run that is still open")
 			}
 		}
-		if err := formula.Retire(s.clock.Now()); err != nil {
+		if err := formula.Retire(
+			s.commitTime(snapshot, domain.EventSubject("formula", id)),
+		); err != nil {
 			return err
 		}
 		snapshot.Formulas[id] = formula
